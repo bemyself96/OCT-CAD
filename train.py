@@ -12,7 +12,7 @@ from torch.optim import lr_scheduler
 from transformers import AutoModel, AutoTokenizer
 
 from network.minenet import MineNet
-from network.chdnet342 import CHDNet
+from network.chdnet import CHDNet
 from dataloader import get_data_loaders
 from utils import print_options, MI_Loss
 
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="CHD")
     parser.add_argument("--exp_name", type=str, default="CHD_1")
-    parser.add_argument("--cuda", type=str, default="2")
+    parser.add_argument("--cuda", type=str, default="0")
     parser.add_argument("--seed", type=int, default=77)
     parser.add_argument("--epoch", type=int, default=100)
     parser.add_argument("--in_channels", type=int, default=1)
@@ -53,7 +53,7 @@ if __name__ == "__main__":
     parser.add_argument("--info_dim", type=int, default=7)
     parser.add_argument("--max_length", type=int, default=64)
     parser.add_argument("--feature_dim", type=int, default=256)
-    parser.add_argument("--data_path", type=str, default="/home/Data/lixiaohui/CHD/CHD3831")
+    parser.add_argument("--data_path", type=str, default="/home/Data/CHD383")
     parser.add_argument("--data_type", type=list, default=["OCT_Center", "OCTA_Center", "data_proj"])
     parser.add_argument("--eye_id", type=list, default=["OD", "OS"])
     parser.add_argument("--train_list", type=str, default="./datasets/train_1.txt")
@@ -68,9 +68,7 @@ if __name__ == "__main__":
         type=str,
         default="./premodels/microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext",
     )
-    parser.add_argument(
-        "--result_root", type=str, default="/home/Data/lixiaohui/CHD_models/bert_info_image/base/logs_s77"
-    )
+    parser.add_argument("--result_root", type=str, default="/home/Data/CHD_models/bert_info_image/base/logs_s77")
 
     opt = parser.parse_args()
     opt.result_dir = os.path.join(opt.result_root, opt.exp_name)
@@ -185,101 +183,5 @@ if __name__ == "__main__":
             )
         scheduler.step()
 
-        accuracy = 0.0
-        label_list = []
-        predict_list = []
-        prob_list = []
-        name_list = []
-        tp = 0
-        tn = 0
-        fp = 0
-        fn = 0
-
-        with torch.no_grad():
-            main_model.eval()
-            test_correct = 0.0
-            test_total = 0.0
-            for j, (img_oct, img_octa, img_octp, ie_input_ids, ie_attention_mask, layer, label, pID_eye) in enumerate(
-                test_loader
-            ):
-                dim = label.shape
-                img_oct, img_octa, img_octp, ie_input_ids, ie_attention_mask, layer, label = (
-                    img_oct.to(device),
-                    img_octa.to(device),
-                    img_octp.to(device),
-                    ie_input_ids.to(device),
-                    ie_attention_mask.to(device),
-                    layer.to(device),
-                    label.to(device),
-                )
-
-                auto_output = auto_model(ie_input_ids, attention_mask=ie_attention_mask)
-                auto_output_last = auto_output.last_hidden_state
-                cls_embedding = auto_output_last[:, 0, :]
-                mean_embedding = auto_output_last.mean(dim=1)
-                max_embedding, _ = auto_output_last.max(dim=1)
-                combined_embedding = torch.cat([cls_embedding, mean_embedding, max_embedding], dim=1)
-
-                _, _, _, _, output = main_model(img_oct, img_octa, img_octp, layer, combined_embedding)
-
-                predicted = torch.max(output.data, 1)[1]
-                prob = [a1[1] for a1 in torch.softmax(output, dim=1).data]
-
-                for ii in range(dim[0]):
-                    name_list.append(pID_eye[ii])
-                    label_list.append(label[ii].item())
-                    predict_list.append(predicted[ii].item())
-                    prob_list.append(prob[ii].item())
-
-            for jj in range(len(label_list)):
-                if label_list[jj] == 0 and predict_list[jj] == 0:
-                    tn += 1
-                elif label_list[jj] == 0 and predict_list[jj] == 1:
-                    fp += 1
-                elif label_list[jj] == 1 and predict_list[jj] == 0:
-                    fn += 1
-                else:
-                    tp += 1
-            accuracy = (tp + tn) / (tp + tn + fp + fn)
-            precision = 0 if (tp + fp) == 0 else tp / (tp + fp)
-            recall = 0 if (tp + fn) == 0 else tp / (tp + fn)
-            f1_score = 0 if (2 * tp + fp + fn) == 0 else 2 * tp / (2 * tp + fp + fn)
-            specificity = 0 if (tn + fp) == 0 else tn / (tn + fp)
-            print(accuracy)
-            print(precision)
-            print(recall)
-            print(f1_score)
-            print(specificity)
-            print("confuse_matrix:" + str([tp, fp, fn, tn]))
-            print("label_list:" + str(label_list))
-            print("predict_list:" + str(predict_list))
-            print("prob_list:" + str(prob_list))
-
-        save_dir = os.path.join(opt.result_dir, "models")
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        if accuracy >= best_acc:
-            best_acc = accuracy
-            best_pre = precision
-            best_rec = recall
-            best_f1 = f1_score
-            best_spe = specificity
-            best_acc_epoch = epoch
-            best_label_list = label_list
-            best_predict_list = predict_list
-            best_prob_list = prob_list
-            best_name_list = name_list
-            best_confuse_matrix = [tp, fp, fn, tn]
-            state = {"main_model": main_model.state_dict()}
-            torch.save(state, os.path.join(save_dir, "best_model_{}_{}.pth".format(epoch, best_acc)))
     state = {"main_model": main_model.state_dict()}
-    torch.save(state, os.path.join(save_dir, "final_model_{}_{}.pth".format(epoch, accuracy)))
-    result = [best_acc_epoch, best_acc, best_pre, best_rec, best_f1, best_spe]
-    with open(os.path.join(opt.result_root, "result_{}.txt".format(opt.exp_name)), "w") as f:
-        for item in result:
-            f.write(str(item) + "\n")
-        f.write("confuse_matrix:" + str(best_confuse_matrix) + "\n")
-        f.write("label_list:" + str(best_label_list) + "\n")
-        f.write("predict_list:" + str(best_predict_list) + "\n")
-        f.write("prob_list:" + str(best_prob_list) + "\n")
-        f.write("name_list:" + str(best_name_list) + "\n")
+    torch.save(state, os.path.join("model_{}_{}.pth".format(epoch, accuracy)))
